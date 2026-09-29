@@ -90,4 +90,25 @@ defmodule Mix.Tasks.ReacherTest do
       end
     )
   end
+
+  test "prints sorted machine-readable findings" do
+    in_project(
+      fn module ->
+        """
+        defmodule #{inspect(module)} do
+          def zeta, do: :unused
+          def alpha(value), do: value
+        end
+        """
+      end,
+      fn module ->
+        output = capture_io(fn -> Mix.Tasks.Reacher.run(["--format", "json"]) end)
+
+        assert :json.decode(output) == [
+                 %{"arity" => 1, "function" => "alpha", "module" => inspect(module)},
+                 %{"arity" => 0, "function" => "zeta", "module" => inspect(module)}
+               ]
+      end
+    )
+  end
 end

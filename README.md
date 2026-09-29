@@ -7,9 +7,12 @@ Use it via a mix task:
 ```sh
 mix reacher
 mix reacher MyApp.SomeModule
+mix reacher --format json
 ```
 
 The second form allows to only list functions defined in a certain module (although bear in mind that a full project analysis is required anyway; it's just a human convenience, not performance shortcut).
+
+The JSON form prints a sorted array of objects with `module`, `function`, and `arity` fields. The output is stable, so it can be diffed between revisions (for example in CI) to report added and removed findings.
 
 ## Sources
 

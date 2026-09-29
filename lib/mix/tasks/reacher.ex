@@ -5,6 +5,7 @@ defmodule Mix.Tasks.Reacher do
 
       mix reacher
       mix reacher MyApp.SomeModule
+      mix reacher --format json
 
   Passing a module limits the report to that module.
   """
@@ -15,11 +16,19 @@ defmodule Mix.Tasks.Reacher do
 
   @impl Mix.Task
   def run(args) do
+    {opts, args, invalid} = OptionParser.parse(args, strict: [format: :string])
     selected_module = selected_module(args)
 
-    Reacher.analyze()
-    |> filter(selected_module)
-    |> print_results()
+    if invalid != [] or Keyword.get(opts, :format, "text") not in ["text", "json"] do
+      Mix.raise("Usage: mix reacher [--format text|json] [Module]")
+    end
+
+    results = Reacher.analyze() |> filter(selected_module)
+
+    case Keyword.get(opts, :format, "text") do
+      "json" -> print_json(results)
+      "text" -> print_results(results)
+    end
   end
 
   defp selected_module([]), do: nil
@@ -32,6 +41,16 @@ defmodule Mix.Tasks.Reacher do
     Enum.filter(unreachable, fn {module, _name, _arity} ->
       module == selected_module
     end)
+  end
+
+  defp print_json(unreachable) do
+    unreachable
+    |> Enum.map(fn {module, name, arity} ->
+      %{module: inspect(module), function: Atom.to_string(name), arity: arity}
+    end)
+    |> Enum.sort_by(fn finding -> {finding.module, finding.function, finding.arity} end)
+    |> :json.encode()
+    |> IO.puts()
   end
 
   defp print_results([]) do
