@@ -91,6 +91,50 @@ defmodule Mix.Tasks.ReacherTest do
     )
   end
 
+  test "prints unnecessary skip warnings" do
+    in_project(
+      fn module ->
+        """
+        defmodule #{inspect(module)} do
+          def unused, do: :unused
+        end
+        """
+      end,
+      fn module ->
+        File.write!(".reacher.exs", """
+        [exclude: [NonExistent.Module, {#{inspect(module)}, :unused, 0}]]
+        """)
+
+        output = capture_io(fn -> Mix.Tasks.Reacher.run([]) end)
+
+        assert output =~ "Unnecessary skips"
+        assert output =~ "NonExistent.Module"
+        refute output =~ "#{inspect(module)}.unused/0"
+      end
+    )
+  end
+
+  test "does not print unnecessary skip section when all exclusions match" do
+    in_project(
+      fn module ->
+        """
+        defmodule #{inspect(module)} do
+          def unused, do: :unused
+        end
+        """
+      end,
+      fn module ->
+        File.write!(".reacher.exs", """
+        [exclude: [{#{inspect(module)}, :unused, 0}]]
+        """)
+
+        output = capture_io(fn -> Mix.Tasks.Reacher.run([]) end)
+
+        refute output =~ "Unnecessary skips"
+      end
+    )
+  end
+
   test "prints sorted machine-readable findings" do
     in_project(
       fn module ->

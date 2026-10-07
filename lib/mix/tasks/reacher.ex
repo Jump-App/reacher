@@ -23,11 +23,18 @@ defmodule Mix.Tasks.Reacher do
       Mix.raise("Usage: mix reacher [--format text|json] [Module]")
     end
 
-    results = Reacher.analyze() |> filter(selected_module)
+    %{unreachable: unreachable, unnecessary_skips: unnecessary_skips} = Reacher.analyze_full()
+    results = filter(unreachable, selected_module)
 
-    case Keyword.get(opts, :format, "text") do
-      "json" -> print_json(results)
-      "text" -> print_results(results)
+    format = Keyword.get(opts, :format, "text")
+
+    case format do
+      "json" ->
+        print_json(results)
+
+      "text" ->
+        print_results(results)
+        print_unnecessary_skips(unnecessary_skips)
     end
   end
 
@@ -79,6 +86,24 @@ defmodule Mix.Tasks.Reacher do
       "\n\nFound #{function_count} unused #{pluralize("function", function_count)} " <>
         "across #{module_count} #{pluralize("module", module_count)}."
     )
+  end
+
+  defp print_unnecessary_skips([]), do: :ok
+
+  defp print_unnecessary_skips(unnecessary_skips) do
+    Mix.shell().info("")
+    Mix.shell().info("Unnecessary skips (not matching any candidate):")
+
+    Enum.each(unnecessary_skips, fn
+      {m, n, a} when is_atom(m) and is_atom(n) and is_integer(a) ->
+        Mix.shell().info("  #{inspect(m)}.#{n}/#{a}")
+
+      {n, a} when is_atom(n) and is_integer(a) ->
+        Mix.shell().info("  #{n}/#{a}")
+
+      module when is_atom(module) ->
+        Mix.shell().info("  #{inspect(module)}")
+    end)
   end
 
   defp pluralize(word, 1), do: word

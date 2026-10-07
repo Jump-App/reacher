@@ -1,12 +1,20 @@
 defmodule Reacher do
   def analyze do
-    do_analyze()
+    %{unreachable: unreachable} = do_analyze()
+    unreachable
   end
 
   def analyze(module) do
-    do_analyze()
+    analyze()
     |> Enum.filter(fn {mod, _, _} -> mod == module end)
     |> print()
+  end
+
+  @doc """
+  Like `analyze/0` but also returns unnecessary skips.
+  """
+  def analyze_full do
+    do_analyze()
   end
 
   defp print(unreachable) do
@@ -34,8 +42,11 @@ defmodule Reacher do
         compiler_references: Reacher.Tracing.Manifest.references()
       }
 
-      Reacher.Xref.unreachable(server, ebin, modules)
-      |> Reacher.Filterer.run(context, config)
+      {unreachable, unnecessary_skips} =
+        Reacher.Xref.unreachable(server, ebin, modules)
+        |> Reacher.Filterer.run(context, config)
+
+      %{unreachable: unreachable, unnecessary_skips: unnecessary_skips}
     end)
   end
 end

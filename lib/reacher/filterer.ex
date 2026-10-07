@@ -26,11 +26,17 @@ defmodule Reacher.Filterer do
   def run(candidates, context, config) do
     builtins = defaults()
     custom = Keyword.get(config, :filterers, [])
-    exclusions = {Reacher.Filter.Project, [exclude: Keyword.get(config, :exclude, [])]}
+    exclude_opts = [exclude: Keyword.get(config, :exclude, [])]
 
-    Enum.reduce(builtins ++ custom ++ [exclusions], candidates, fn entry, remaining ->
-      {module, opts} = if is_atom(entry), do: {entry, []}, else: entry
-      module.filter(remaining, context, opts)
-    end)
+    pre_exclusion =
+      Enum.reduce(builtins ++ custom, candidates, fn entry, remaining ->
+        {module, opts} = if is_atom(entry), do: {entry, []}, else: entry
+        module.filter(remaining, context, opts)
+      end)
+
+    unnecessary_skips = Reacher.Filter.Project.unnecessary_skips(pre_exclusion, exclude_opts)
+    filtered = Reacher.Filter.Project.filter(pre_exclusion, context, exclude_opts)
+
+    {filtered, unnecessary_skips}
   end
 end
