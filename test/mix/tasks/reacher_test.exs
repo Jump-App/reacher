@@ -24,7 +24,12 @@ defmodule Mix.Tasks.ReacherTest do
       fn module ->
         target = Module.concat(module, Target)
 
-        output = capture_io(fn -> Mix.Tasks.Reacher.run([]) end)
+        output =
+          capture_io(fn ->
+            assert_raise Mix.Error, "Reacher found 3 unused functions", fn ->
+              Mix.Tasks.Reacher.run([])
+            end
+          end)
 
         assert output == """
 
@@ -60,7 +65,12 @@ defmodule Mix.Tasks.ReacherTest do
       fn module ->
         target = Module.concat(module, Target)
 
-        output = capture_io(fn -> Mix.Tasks.Reacher.run([inspect(target)]) end)
+        output =
+          capture_io(fn ->
+            assert_raise Mix.Error, "Reacher found 1 unused function", fn ->
+              Mix.Tasks.Reacher.run([inspect(target)])
+            end
+          end)
 
         assert output == """
 
@@ -146,7 +156,12 @@ defmodule Mix.Tasks.ReacherTest do
         """
       end,
       fn module ->
-        output = capture_io(fn -> Mix.Tasks.Reacher.run(["--format", "json"]) end)
+        output =
+          capture_io(fn ->
+            assert_raise Mix.Error, "Reacher found 2 unused functions", fn ->
+              Mix.Tasks.Reacher.run(["--format", "json"])
+            end
+          end)
 
         assert :json.decode(output) == [
                  %{"arity" => 1, "function" => "alpha", "module" => inspect(module)},

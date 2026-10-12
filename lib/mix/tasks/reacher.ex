@@ -36,6 +36,12 @@ defmodule Mix.Tasks.Reacher do
         print_results(results)
         print_unnecessary_skips(unnecessary_skips)
     end
+
+    if results != [] do
+      Mix.raise(
+        "Reacher found #{length(results)} unused #{pluralize("function", length(results))}"
+      )
+    end
   end
 
   defp selected_module([]), do: nil
