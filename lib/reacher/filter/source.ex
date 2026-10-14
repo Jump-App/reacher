@@ -1,7 +1,9 @@
 defmodule Reacher.Filter.Source do
   @moduledoc """
-  Finds source-only registrations and, for files without compiler traces,
-  literal calls that disappear from BEAM call graphs.
+  Finds source-only registrations and calls outside the compiled environment.
+
+  Files without traces use literal-call discovery. Traced files retain source
+  discovery for environment conditionals and case-template setup code.
 
   Source is parsed only. Reacher never evaluates or compiles it.
   """
@@ -154,6 +156,27 @@ defmodule Reacher.Filter.Source do
 
     {_ast, references} =
       Macro.prewalk(ast, references, fn
+        {kind, _, [condition | _]} = node, references
+        when not collect_compile_time_calls? and kind in [:if, :unless, :case] ->
+          references =
+            if environment_condition?(condition) do
+              collect_calls(node, aliases, current_module, references, true)
+            else
+              references
+            end
+
+          {node, references}
+
+        {:using, _, _args} = node, references when not collect_compile_time_calls? ->
+          references =
+            if exports?(current_module, :"MACRO-__using__", 2) do
+              collect_calls(node, aliases, current_module, references, true)
+            else
+              references
+            end
+
+          {node, references}
+
         {{:., _, [module_ast, function]}, _, args} = node, references
         when collect_compile_time_calls? and is_atom(function) and is_list(args) ->
           reference =
@@ -199,6 +222,19 @@ defmodule Reacher.Filter.Source do
       end)
 
     references
+  end
+
+  defp environment_condition?(ast) do
+    {_ast, found?} =
+      Macro.prewalk(ast, false, fn
+        {{:., _, [{:__aliases__, _, [:Mix]}, :env]}, _, []} = node, _found? ->
+          {node, true}
+
+        node, found? ->
+          {node, found?}
+      end)
+
+    found?
   end
 
   defp expand_pipes(ast) do

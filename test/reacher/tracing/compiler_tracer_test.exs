@@ -93,10 +93,81 @@ defmodule Reacher.Tracing.CompilerTracerTest do
         Mix.Task.Compiler.compilers()
         |> Enum.each(&Mix.Task.reenable("compile.#{&1}"))
 
-        Mix.Task.run("compile")
+        ExUnit.CaptureIO.capture_io(fn -> Mix.Task.run("compile") end)
 
         refute Reacher.Tracing.Manifest.referenced?({target, :old_call, 0})
         assert Reacher.Tracing.Manifest.referenced?({target, :new_call, 0})
+      end
+    )
+  end
+
+  test "tracing retains callers in other environments and unexpanded case templates" do
+    in_project(
+      fn module ->
+        target = Module.concat(module, Target)
+        consumer = Module.concat(module, Consumer)
+        template = Module.concat(module, CaseTemplate)
+
+        """
+        defmodule #{inspect(target)} do
+          def production_only, do: :ok
+          def setup_helper, do: :ok
+          def unused, do: :ok
+        end
+
+        defmodule #{inspect(consumer)} do
+          if Mix.env() == :test do
+            def run, do: :ok
+          else
+            def run, do: #{inspect(target)}.production_only()
+          end
+        end
+
+        defmodule #{inspect(template)} do
+          use ExUnit.CaseTemplate
+
+          using do
+            quote do
+              setup do
+                #{inspect(target)}.setup_helper()
+              end
+            end
+          end
+        end
+        """
+      end,
+      [compiler_trace: true],
+      fn module ->
+        target = Module.concat(module, Target)
+        findings = Reacher.analyze()
+
+        refute {target, :production_only, 0} in findings
+        refute {target, :setup_helper, 0} in findings
+        assert {target, :unused, 0} in findings
+      end
+    )
+  end
+
+  test "recognizes an imported call made only during compilation" do
+    in_project(
+      fn module ->
+        target = Module.concat(module, Target)
+        consumer = Module.concat(module, Consumer)
+
+        """
+        defmodule #{inspect(target)} do
+          def compile_time_only, do: :ok
+        end
+
+        defmodule #{inspect(consumer)} do
+          import #{inspect(target)}
+          :ok = compile_time_only()
+        end
+        """
+      end,
+      [compiler_trace: true],
+      fn module ->
+        refute {Module.concat(module, Target), :compile_time_only, 0} in Reacher.analyze()
       end
     )
   end

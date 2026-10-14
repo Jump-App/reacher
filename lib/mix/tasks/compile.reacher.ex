@@ -14,7 +14,14 @@ defmodule Mix.Tasks.Compile.Reacher do
       &after_elixir_compiler(&1, tracers)
     )
 
-    Code.put_compiler_option(:tracers, [Reacher.Tracing.CompilerTracer | tracers])
+    configured_tracers =
+      Mix.Project.config()
+      |> Keyword.get(:elixirc_options, [])
+      |> Keyword.get(:tracers, [])
+
+    unless Reacher.Tracing.CompilerTracer in configured_tracers do
+      Code.put_compiler_option(:tracers, [Reacher.Tracing.CompilerTracer | tracers])
+    end
 
     :noop
   end

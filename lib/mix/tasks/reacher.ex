@@ -12,16 +12,17 @@ defmodule Mix.Tasks.Reacher do
 
   use Mix.Task
 
-  @requirements ["compile"]
-
   @impl Mix.Task
   def run(args) do
     {opts, args, invalid} = OptionParser.parse(args, strict: [format: :string])
+
     selected_module = selected_module(args)
 
     if invalid != [] or Keyword.get(opts, :format, "text") not in ["text", "json"] do
       Mix.raise("Usage: mix reacher [--format text|json] [Module]")
     end
+
+    Mix.Task.run("compile")
 
     %{unreachable: unreachable, unnecessary_skips: unnecessary_skips} = Reacher.analyze_full()
     results = filter(unreachable, selected_module)

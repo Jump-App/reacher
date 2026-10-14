@@ -78,7 +78,7 @@ defmodule Reacher.TestProject do
 
     try do
       Mix.Project.in_project(app, path, fn _project ->
-        Mix.Task.run("compile")
+        ExUnit.CaptureIO.capture_io(fn -> Mix.Task.run("compile") end)
         {:ok, _} = Application.ensure_all_started(:tools)
         Code.prepend_path(@compile_path)
         Enum.each(@reacher_modules, &reload/1)
