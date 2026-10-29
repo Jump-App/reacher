@@ -9,7 +9,8 @@ defmodule Reacher.Context do
           compile_path: String.t(),
           project_root: String.t(),
           compiler_traced_sources: MapSet.t(String.t()),
-          compiler_references: MapSet.t({String.t(), String.t(), arity()})
+          compiler_references: MapSet.t({String.t(), String.t(), arity()}),
+          default_families: %{mfa() => [mfa()]}
         }
 
   @enforce_keys [:modules, :compile_path, :project_root]
@@ -18,6 +19,7 @@ defmodule Reacher.Context do
     :compile_path,
     :project_root,
     compiler_traced_sources: MapSet.new(),
-    compiler_references: MapSet.new()
+    compiler_references: MapSet.new(),
+    default_families: %{}
   ]
 end

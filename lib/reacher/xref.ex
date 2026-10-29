@@ -17,26 +17,78 @@ defmodule Reacher.Xref do
     MapSet.new(analyzed_modules)
   end
 
+  @doc """
+  Returns unused candidates and the default-argument families among them.
+
+  A function with default arguments compiles to the full-arity definition plus
+  one stub per omitted default, and each stub calls the full arity locally, so
+  `:xref` never sees the full arity as unused. Such a family is treated as one
+  unit: it is unused when no member has a caller outside the family, in which
+  case every member is returned as a candidate and the family is listed in the
+  returned map, keyed by its full-arity MFA.
+  """
   def unreachable(server, ebin, analyzed_modules) do
-    {:ok, candidates} = :xref.q(server, ~c"X * UU")
+    {:ok, unused} = :xref.q(server, ~c"X * UU")
 
     metadata =
       Map.new(analyzed_modules, fn module ->
         {module, read_metadata(module, ebin)}
       end)
 
+    families = default_families(metadata)
+    family_members = families |> Map.values() |> List.flatten() |> MapSet.new()
+    unused_families = unused_default_families(server, families)
+
     after_verify_targets = after_verify_targets(metadata)
     statically_resolved_calls = statically_resolved_calls(metadata)
 
-    Enum.filter(candidates, fn {module, _name, _arity} = mfa ->
-      MapSet.member?(analyzed_modules, module) and
-        not macro_export?(mfa) and
-        not reserved?(mfa) and
-        not generated?(mfa, metadata) and
-        not behaviour_callback?(mfa, metadata) and
-        not MapSet.member?(after_verify_targets, mfa) and
-        not MapSet.member?(statically_resolved_calls, mfa)
-    end)
+    candidates =
+      unused
+      |> Enum.reject(&MapSet.member?(family_members, &1))
+      |> Enum.concat(unused_families |> Map.values() |> List.flatten())
+      |> Enum.reject(fn {module, _name, _arity} = mfa ->
+        not MapSet.member?(analyzed_modules, module) or
+          macro_export?(mfa) or
+          reserved?(mfa) or
+          generated?(mfa, metadata) or
+          behaviour_callback?(mfa, metadata) or
+          MapSet.member?(after_verify_targets, mfa) or
+          MapSet.member?(statically_resolved_calls, mfa)
+      end)
+
+    {candidates, unused_families}
+  end
+
+  defp default_families(metadata) do
+    for {module, %{default_families: families}} <- metadata,
+        {name, arity, defaults} <- families,
+        into: %{} do
+      members = Enum.map((arity - defaults)..arity, &{module, name, &1})
+      {{module, name, arity}, members}
+    end
+  end
+
+  defp unused_default_families(_server, families) when map_size(families) == 0, do: %{}
+
+  defp unused_default_families(server, families) do
+    family_by_member =
+      for {full, members} <- families, member <- members, into: %{}, do: {member, full}
+
+    targets = family_by_member |> Map.keys() |> Enum.map_join(", ", &xref_function/1)
+    {:ok, edges} = :xref.q(server, String.to_charlist("E || [#{targets}]"))
+
+    used =
+      for {caller, callee} <- edges,
+          family = Map.fetch!(family_by_member, callee),
+          Map.get(family_by_member, caller) != family,
+          into: MapSet.new(),
+          do: family
+
+    Map.reject(families, fn {full, _members} -> MapSet.member?(used, full) end)
+  end
+
+  defp xref_function({module, name, arity}) do
+    ~c"~tw:~tw/~b" |> :io_lib.format([module, name, arity]) |> IO.chardata_to_string()
   end
 
   defp read_metadata(module, ebin) do
@@ -63,8 +115,12 @@ defmodule Reacher.Xref do
              data,
              []
            ) do
+      generated = generated_definitions(definitions)
+      default_families = default_families_in(definitions, generated)
+
       %{
-        generated: generated_definitions(definitions),
+        generated: MapSet.difference(generated, default_stubs(default_families)),
+        default_families: default_families,
         callbacks: behaviour_callbacks(attributes),
         after_verify: Map.get(info, :after_verify, []),
         statically_resolved_calls: statically_resolved_calls(definitions)
@@ -73,6 +129,7 @@ defmodule Reacher.Xref do
       _ ->
         %{
           generated: MapSet.new(),
+          default_families: [],
           callbacks: MapSet.new(),
           after_verify: [],
           statically_resolved_calls: MapSet.new()
@@ -125,6 +182,24 @@ defmodule Reacher.Xref do
         {name, arity}
     end)
     |> MapSet.new()
+  end
+
+  # The compiler stamps `:defaults` on the full-arity definition and emits the
+  # stubs with an `:elixir_def` context, which `generated_definitions/1` would
+  # otherwise treat as macro output.
+  defp default_families_in(definitions, generated) do
+    for {{name, arity}, :def, meta, _clauses} <- definitions,
+        defaults = meta[:defaults],
+        is_integer(defaults),
+        not MapSet.member?(generated, {name, arity}),
+        do: {name, arity, defaults}
+  end
+
+  defp default_stubs(default_families) do
+    for {name, arity, defaults} <- default_families,
+        stub_arity <- (arity - defaults)..(arity - 1)//1,
+        into: MapSet.new(),
+        do: {name, stub_arity}
   end
 
   defp all_clauses_generated?([]), do: false

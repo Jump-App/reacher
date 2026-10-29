@@ -33,18 +33,18 @@ defmodule Reacher do
 
     Reacher.Xref.with_xref_server(ebin, fn server ->
       modules = Reacher.Xref.get_modules(server)
+      {candidates, default_families} = Reacher.Xref.unreachable(server, ebin, modules)
 
       context = %Reacher.Context{
         modules: modules,
         compile_path: compile_path,
         project_root: project_root,
         compiler_traced_sources: Reacher.Tracing.Manifest.traced_sources(),
-        compiler_references: Reacher.Tracing.Manifest.references()
+        compiler_references: Reacher.Tracing.Manifest.references(),
+        default_families: default_families
       }
 
-      {unreachable, unnecessary_skips} =
-        Reacher.Xref.unreachable(server, ebin, modules)
-        |> Reacher.Filterer.run(context, config)
+      {unreachable, unnecessary_skips} = Reacher.Filterer.run(candidates, context, config)
 
       %{unreachable: unreachable, unnecessary_skips: unnecessary_skips}
     end)

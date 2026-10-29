@@ -1,7 +1,7 @@
 defmodule ReacherTest do
   use ExUnit.Case, async: false
 
-  import Reacher.TestProject, only: [in_project: 2]
+  import Reacher.TestProject, only: [in_project: 2, in_project: 3]
 
   describe "analyze/0" do
     test "reports unused functions from analyzed modules" do
@@ -297,6 +297,155 @@ defmodule ReacherTest do
                    unreachable,
                    {Module.concat(module, Utils), :"MACRO-__using__", 2}
                  )
+        end
+      )
+    end
+  end
+
+  describe "functions with default arguments" do
+    test "reports an unused function once, at its full arity" do
+      in_project(
+        fn module ->
+          target = Module.concat(module, Target)
+
+          """
+          defmodule #{inspect(target)} do
+            def unused(id, opts \\\\ []), do: {id, opts}
+            def unused_many(a \\\\ 1, b \\\\ 2), do: {a, b}
+
+            def unused_head(id, opts \\\\ [])
+            def unused_head(id, []), do: id
+            def unused_head(id, opts), do: {id, opts}
+
+            def unused_recursive(list, acc \\\\ [])
+            def unused_recursive([], acc), do: acc
+            def unused_recursive([head | tail], acc), do: unused_recursive(tail, [head | acc])
+
+            def called_through_stub(id, opts \\\\ []), do: {id, opts}
+            def called_at_full_arity(id, opts \\\\ []), do: {id, opts}
+          end
+
+          defmodule #{inspect(module)} do
+            def entry do
+              #{inspect(target)}.called_through_stub(1)
+              #{inspect(target)}.called_at_full_arity(1, [])
+            end
+          end
+          """
+        end,
+        fn module ->
+          target = Module.concat(module, Target)
+          unreachable = Reacher.analyze() |> MapSet.new()
+
+          assert MapSet.member?(unreachable, {target, :unused, 2})
+          refute MapSet.member?(unreachable, {target, :unused, 1})
+
+          assert MapSet.member?(unreachable, {target, :unused_many, 2})
+          refute MapSet.member?(unreachable, {target, :unused_many, 1})
+          refute MapSet.member?(unreachable, {target, :unused_many, 0})
+
+          assert MapSet.member?(unreachable, {target, :unused_head, 2})
+          assert MapSet.member?(unreachable, {target, :unused_recursive, 2})
+
+          refute Enum.any?(unreachable, fn {mod, name, _arity} ->
+                   mod == target and name in [:called_through_stub, :called_at_full_arity]
+                 end)
+        end
+      )
+    end
+
+    test "does not report a function whose stub is called at compile time" do
+      in_project(
+        fn module ->
+          target = Module.concat(module, Target)
+
+          """
+          defmodule #{inspect(target)} do
+            def build(id, opts \\\\ []), do: {id, opts}
+          end
+
+          defmodule #{inspect(module)} do
+            @value #{inspect(target)}.build(1)
+
+            def value, do: @value
+          end
+          """
+        end,
+        [compiler_trace: true],
+        fn module ->
+          target = Module.concat(module, Target)
+          unreachable = Reacher.analyze() |> MapSet.new()
+
+          refute MapSet.member?(unreachable, {target, :build, 1})
+          refute MapSet.member?(unreachable, {target, :build, 2})
+        end
+      )
+    end
+
+    test "matches project exclusions against the full arity" do
+      in_project(
+        fn module ->
+          """
+          defmodule #{inspect(module)} do
+            def excluded(id, opts \\\\ []), do: {id, opts}
+          end
+          """
+        end,
+        fn module ->
+          File.write!(".reacher.exs", "[exclude: [{#{inspect(module)}, :excluded, 2}]]")
+
+          %{unreachable: unreachable, unnecessary_skips: unnecessary_skips} =
+            Reacher.analyze_full()
+
+          refute Enum.any?(unreachable, fn {mod, _name, _arity} -> mod == module end)
+          assert unnecessary_skips == []
+        end
+      )
+    end
+
+    test "honors project exclusions at a stub arity" do
+      in_project(
+        fn module ->
+          """
+          defmodule #{inspect(module)} do
+            def excluded(id, opts \\\\ []), do: {id, opts}
+          end
+          """
+        end,
+        fn module ->
+          File.write!(".reacher.exs", "[exclude: [{#{inspect(module)}, :excluded, 1}]]")
+
+          %{unreachable: unreachable, unnecessary_skips: unnecessary_skips} =
+            Reacher.analyze_full()
+
+          refute Enum.any?(unreachable, fn {mod, _name, _arity} -> mod == module end)
+          assert unnecessary_skips == []
+        end
+      )
+    end
+
+    test "reports exclusions of a function used through its stub as unnecessary" do
+      in_project(
+        fn module ->
+          target = Module.concat(module, Target)
+
+          """
+          defmodule #{inspect(target)} do
+            def used(id, opts \\\\ []), do: {id, opts}
+          end
+
+          defmodule #{inspect(module)} do
+            def entry, do: #{inspect(target)}.used(1)
+          end
+          """
+        end,
+        fn module ->
+          target = Module.concat(module, Target)
+          File.write!(".reacher.exs", "[exclude: [{#{inspect(target)}, :used, 2}]]")
+
+          %{unnecessary_skips: unnecessary_skips} = Reacher.analyze_full()
+
+          assert unnecessary_skips == [{target, :used, 2}]
         end
       )
     end

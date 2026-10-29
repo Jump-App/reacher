@@ -83,3 +83,7 @@ The context exposes:
   compiler traces
 - `compiler_references`: a `MapSet` of `{module_string, function_string, arity}`
   references from the compiler trace manifest
+- `default_families`: unused functions with default arguments, as a map from
+  the full-arity MFA to every arity it compiles to. Candidates include all of
+  these arities; removing any one of them keeps the whole function out of the
+  report
