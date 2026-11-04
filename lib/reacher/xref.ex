@@ -18,45 +18,52 @@ defmodule Reacher.Xref do
   end
 
   @doc """
-  Returns unused candidates and the default-argument families among them.
+  Returns unused candidates, the default-argument families among them, and the
+  groups of candidates that are reported together or not at all.
+
+  A function is unused when nothing outside its own call cycle calls it, so
+  recursion (direct, through `__MODULE__`, or mutual) does not count as a use.
+  The exported functions of one cycle form a group: when any of them is an
+  entry point, the whole group is used.
 
   A function with default arguments compiles to the full-arity definition plus
   one stub per omitted default, and each stub calls the full arity locally, so
-  `:xref` never sees the full arity as unused. Such a family is treated as one
-  unit: it is unused when no member has a caller outside the family, in which
-  case every member is returned as a candidate and the family is listed in the
-  returned map, keyed by its full-arity MFA.
+  such a family is treated as one unit: it is unused when no member has a
+  caller outside the family (or its cycle), in which case every member is
+  returned as a candidate, belongs to the same group, and the family is listed
+  in the returned map, keyed by its full-arity MFA.
   """
   def unreachable(server, ebin, analyzed_modules) do
-    {:ok, unused} = :xref.q(server, ~c"X * UU")
-
     metadata =
       Map.new(analyzed_modules, fn module ->
         {module, read_metadata(module, ebin)}
       end)
 
     families = default_families(metadata)
-    family_members = families |> Map.values() |> List.flatten() |> MapSet.new()
-    unused_families = unused_default_families(server, families)
+    {dead_components, unused_families} = dead_components(server, families)
 
     after_verify_targets = after_verify_targets(metadata)
     statically_resolved_calls = statically_resolved_calls(metadata)
 
-    candidates =
-      unused
-      |> Enum.reject(&MapSet.member?(family_members, &1))
-      |> Enum.concat(unused_families |> Map.values() |> List.flatten())
-      |> Enum.reject(fn {module, _name, _arity} = mfa ->
-        not MapSet.member?(analyzed_modules, module) or
-          macro_export?(mfa) or
-          reserved?(mfa) or
-          generated?(mfa, metadata) or
-          behaviour_callback?(mfa, metadata) or
-          MapSet.member?(after_verify_targets, mfa) or
-          MapSet.member?(statically_resolved_calls, mfa)
-      end)
+    entry_point? = fn mfa ->
+      macro_export?(mfa) or
+        reserved?(mfa) or
+        generated?(mfa, metadata) or
+        behaviour_callback?(mfa, metadata) or
+        MapSet.member?(after_verify_targets, mfa) or
+        MapSet.member?(statically_resolved_calls, mfa)
+    end
 
-    {candidates, unused_families}
+    groups =
+      dead_components
+      |> Enum.map(fn component ->
+        Enum.filter(component, fn {module, _name, _arity} ->
+          MapSet.member?(analyzed_modules, module)
+        end)
+      end)
+      |> Enum.reject(&(&1 == [] or Enum.any?(&1, entry_point?)))
+
+    {List.flatten(groups), unused_families, Enum.filter(groups, &match?([_, _ | _], &1))}
   end
 
   defp default_families(metadata) do
@@ -68,27 +75,65 @@ defmodule Reacher.Xref do
     end
   end
 
-  defp unused_default_families(_server, families) when map_size(families) == 0, do: %{}
+  # Builds the call graph with each default-argument family collapsed into its
+  # full-arity MFA, then condenses it into strongly connected components. A
+  # component without incoming edges has no caller outside itself, so its
+  # exported functions are unused unless one of them is an entry point.
+  defp dead_components(server, families) do
+    {:ok, functions} = :xref.q(server, ~c"F")
+    {:ok, exported} = :xref.q(server, ~c"X")
+    {:ok, edges} = :xref.q(server, ~c"E || F")
 
-  defp unused_default_families(server, families) do
     family_by_member =
       for {full, members} <- families, member <- members, into: %{}, do: {member, full}
 
-    targets = family_by_member |> Map.keys() |> Enum.map_join(", ", &xref_function/1)
-    {:ok, edges} = :xref.q(server, String.to_charlist("E || [#{targets}]"))
+    node = &Map.get(family_by_member, &1, &1)
 
-    used =
-      for {caller, callee} <- edges,
-          family = Map.fetch!(family_by_member, callee),
-          Map.get(family_by_member, caller) != family,
-          into: MapSet.new(),
-          do: family
+    dead_components =
+      with_call_graph(functions, edges, node, fn graph ->
+        condensation = :digraph_utils.condensation(graph)
 
-    Map.reject(families, fn {full, _members} -> MapSet.member?(used, full) end)
+        try do
+          for component <- :digraph.vertices(condensation),
+              :digraph.in_degree(condensation, component) == 0,
+              do: component
+        after
+          :digraph.delete(condensation)
+        end
+      end)
+
+    exported = MapSet.new(exported)
+
+    components =
+      dead_components
+      |> Enum.map(fn component ->
+        component
+        |> Enum.flat_map(&Map.get(families, &1, [&1]))
+        |> Enum.filter(&MapSet.member?(exported, &1))
+      end)
+      |> Enum.reject(&(&1 == []))
+
+    {components, Map.take(families, List.flatten(dead_components))}
   end
 
-  defp xref_function({module, name, arity}) do
-    ~c"~tw:~tw/~b" |> :io_lib.format([module, name, arity]) |> IO.chardata_to_string()
+  defp with_call_graph(functions, edges, node, fun) do
+    graph = :digraph.new()
+
+    try do
+      Enum.each(functions, &:digraph.add_vertex(graph, node.(&1)))
+
+      for {caller, callee} <- edges,
+          caller = node.(caller),
+          callee = node.(callee),
+          caller != callee do
+        :digraph.add_vertex(graph, caller)
+        :digraph.add_edge(graph, caller, callee)
+      end
+
+      fun.(graph)
+    after
+      :digraph.delete(graph)
+    end
   end
 
   defp read_metadata(module, ebin) do

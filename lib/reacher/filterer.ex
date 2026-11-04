@@ -34,29 +34,31 @@ defmodule Reacher.Filterer do
         module.filter(remaining, context, opts)
       end)
 
-    unused = reject_used_families(filtered_candidates, context.default_families)
+    unused = reject_used_groups(filtered_candidates, context.groups)
 
     unnecessary_skips = Reacher.Filter.Project.unnecessary_skips(unused, exclude_opts)
 
     filtered =
       unused
       |> Reacher.Filter.Project.filter(context, exclude_opts)
+      |> reject_used_groups(context.groups)
       |> collapse_default_families(context.default_families)
 
     {filtered, unnecessary_skips}
   end
 
-  # Filterers and exclusions see every arity of a default-argument family, so a
-  # use or exclusion of any member keeps the whole family out of the report.
-  defp reject_used_families(candidates, families) when map_size(families) == 0, do: candidates
+  # Filterers and exclusions see every member of a group (a call cycle, which
+  # includes every arity of a default-argument family), so a use or exclusion
+  # of any member keeps the whole group out of the report.
+  defp reject_used_groups(candidates, []), do: candidates
 
-  defp reject_used_families(candidates, families) do
+  defp reject_used_groups(candidates, groups) do
     remaining = MapSet.new(candidates)
-    family_by_member = family_by_member(families)
+    group_by_member = for group <- groups, member <- group, into: %{}, do: {member, group}
 
     Enum.filter(candidates, fn mfa ->
-      case Map.fetch(family_by_member, mfa) do
-        {:ok, full} -> Enum.all?(Map.fetch!(families, full), &MapSet.member?(remaining, &1))
+      case Map.fetch(group_by_member, mfa) do
+        {:ok, group} -> Enum.all?(group, &MapSet.member?(remaining, &1))
         :error -> true
       end
     end)
@@ -66,15 +68,11 @@ defmodule Reacher.Filterer do
     do: candidates
 
   defp collapse_default_families(candidates, families) do
-    family_by_member = family_by_member(families)
+    family_by_member =
+      for {full, members} <- families, member <- members, into: %{}, do: {member, full}
 
     candidates
-    |> reject_used_families(families)
     |> Enum.map(&Map.get(family_by_member, &1, &1))
     |> Enum.uniq()
-  end
-
-  defp family_by_member(families) do
-    for {full, members} <- families, member <- members, into: %{}, do: {member, full}
   end
 end

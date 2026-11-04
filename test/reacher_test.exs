@@ -302,6 +302,133 @@ defmodule ReacherTest do
     end
   end
 
+  describe "recursive functions" do
+    test "reports functions called only from their own call cycle" do
+      in_project(
+        fn module ->
+          target = Module.concat(module, Target)
+
+          """
+          defmodule #{inspect(target)} do
+            def local([]), do: :ok
+            def local([_ | tail]), do: local(tail)
+
+            def remote([]), do: :ok
+            def remote([_ | tail]), do: __MODULE__.remote(tail)
+
+            def mutual_a(0), do: :ok
+            def mutual_a(n), do: mutual_b(n - 1)
+            def mutual_b(0), do: :ok
+            def mutual_b(n), do: mutual_a(n - 1)
+
+            def through_private(0), do: :ok
+            def through_private(n), do: helper(n)
+            defp helper(n), do: through_private(n - 1)
+
+            def stub_and_cycle(n, opts \\\\ [])
+            def stub_and_cycle(0, opts), do: opts
+            def stub_and_cycle(n, opts), do: cycle_partner(n - 1, opts)
+            def cycle_partner(n, _opts), do: stub_and_cycle(n)
+
+            def used_recursive([]), do: :ok
+            def used_recursive([_ | tail]), do: used_recursive(tail)
+
+            def used_mutual_a(0), do: :ok
+            def used_mutual_a(n), do: used_mutual_b(n - 1)
+            def used_mutual_b(0), do: :ok
+            def used_mutual_b(n), do: used_mutual_a(n - 1)
+          end
+
+          defmodule #{inspect(module)} do
+            def entry do
+              #{inspect(target)}.used_recursive([1])
+              #{inspect(target)}.used_mutual_b(2)
+            end
+          end
+          """
+        end,
+        [compiler_trace: true],
+        fn module ->
+          target = Module.concat(module, Target)
+          unreachable = Reacher.analyze() |> MapSet.new()
+
+          assert MapSet.member?(unreachable, {target, :local, 1})
+          assert MapSet.member?(unreachable, {target, :remote, 1})
+          assert MapSet.member?(unreachable, {target, :mutual_a, 1})
+          assert MapSet.member?(unreachable, {target, :mutual_b, 1})
+          assert MapSet.member?(unreachable, {target, :through_private, 1})
+          assert MapSet.member?(unreachable, {target, :stub_and_cycle, 2})
+          refute MapSet.member?(unreachable, {target, :stub_and_cycle, 1})
+          assert MapSet.member?(unreachable, {target, :cycle_partner, 2})
+
+          refute MapSet.member?(unreachable, {target, :used_recursive, 1})
+          refute MapSet.member?(unreachable, {target, :used_mutual_a, 1})
+          refute MapSet.member?(unreachable, {target, :used_mutual_b, 1})
+        end
+      )
+    end
+
+    test "does not report functions in a call cycle with a behaviour callback" do
+      in_project(
+        fn module ->
+          behaviour = Module.concat(module, Behaviour)
+
+          """
+          defmodule #{inspect(behaviour)} do
+            @callback callback(integer()) :: atom()
+          end
+
+          defmodule #{inspect(module)} do
+            @behaviour #{inspect(behaviour)}
+
+            @impl true
+            def callback(0), do: :ok
+            def callback(n), do: helper(n)
+
+            def helper(n), do: callback(n - 1)
+
+            def unused_a(0), do: :ok
+            def unused_a(n), do: unused_b(n - 1)
+            def unused_b(n), do: unused_a(n)
+          end
+          """
+        end,
+        fn module ->
+          unreachable = Reacher.analyze() |> MapSet.new()
+
+          refute MapSet.member?(unreachable, {module, :callback, 1})
+          refute MapSet.member?(unreachable, {module, :helper, 1})
+          assert MapSet.member?(unreachable, {module, :unused_a, 1})
+          assert MapSet.member?(unreachable, {module, :unused_b, 1})
+        end
+      )
+    end
+
+    test "does not report functions in a call cycle with an excluded function" do
+      in_project(
+        fn module ->
+          """
+          defmodule #{inspect(module)} do
+            def excluded(0), do: :ok
+            def excluded(n), do: helper(n)
+
+            def helper(n), do: excluded(n - 1)
+          end
+          """
+        end,
+        fn module ->
+          File.write!(".reacher.exs", "[exclude: [{#{inspect(module)}, :excluded, 1}]]")
+
+          %{unreachable: unreachable, unnecessary_skips: unnecessary_skips} =
+            Reacher.analyze_full()
+
+          refute Enum.any?(unreachable, fn {mod, _name, _arity} -> mod == module end)
+          assert unnecessary_skips == []
+        end
+      )
+    end
+  end
+
   describe "functions with default arguments" do
     test "reports an unused function once, at its full arity" do
       in_project(
