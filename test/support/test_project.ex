@@ -83,11 +83,30 @@ defmodule Reacher.TestProject do
         Code.prepend_path(@compile_path)
         Enum.each(@reacher_modules, &reload/1)
 
-        fun.(module)
+        try do
+          fun.(module)
+        after
+          unload_fixture_modules()
+        end
       end)
     after
       File.rm_rf!(path)
     end
+  end
+
+  # Fixtures stub library modules such as `Phoenix` or `Oban.Pro.Worker`.
+  # Unloading them keeps one fixture's stubs from making a later fixture look
+  # like it depends on that library.
+  defp unload_fixture_modules do
+    Mix.Project.compile_path()
+    |> Path.join("*.beam")
+    |> Path.wildcard()
+    |> Enum.each(fn beam ->
+      module = beam |> Path.basename(".beam") |> String.to_atom()
+      :code.purge(module)
+      :code.delete(module)
+      :code.purge(module)
+    end)
   end
 
   defp reload(module) do

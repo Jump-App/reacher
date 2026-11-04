@@ -11,6 +11,9 @@ defmodule Reacher.Filter.PhoenixTest do
         router = Module.concat(module, Router)
 
         """
+        defmodule Phoenix do
+        end
+
         defmodule #{inspect(controller)} do
           def listed(_conn, _params), do: :ok
           def unlisted(_conn, _params), do: :ok
@@ -54,6 +57,9 @@ defmodule Reacher.Filter.PhoenixTest do
         unrelated = Module.concat(module, Unrelated)
 
         """
+        defmodule Phoenix do
+        end
+
         defmodule #{inspect(plug)} do
           def init(options), do: options
           def call(conn, _options), do: conn
@@ -153,6 +159,33 @@ defmodule Reacher.Filter.PhoenixTest do
             ] do
           assert MapSet.member?(unreachable, mfa)
         end
+      end
+    )
+  end
+
+  test "reports router entry points when the project does not depend on Phoenix" do
+    in_project(
+      fn module ->
+        controller = Module.concat(module, Controller)
+        router = Module.concat(module, Router)
+
+        """
+        defmodule #{inspect(controller)} do
+          def listed(_conn, _params), do: :ok
+        end
+
+        defmodule #{inspect(router)} do
+          def __routes__ do
+            [%{plug: #{inspect(controller)}, plug_opts: :listed}]
+          end
+        end
+        """
+      end,
+      fn module ->
+        controller = Module.concat(module, Controller)
+        unreachable = Reacher.analyze() |> MapSet.new()
+
+        assert MapSet.member?(unreachable, {controller, :listed, 2})
       end
     )
   end

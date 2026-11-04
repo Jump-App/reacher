@@ -19,15 +19,29 @@ defmodule Reacher.Filter.Phoenix do
   end
 
   defp entry_points(analyzed_modules) do
-    router_entry_points =
-      analyzed_modules
-      |> Enum.filter(&router_module?/1)
-      |> Enum.flat_map(&routes/1)
-      |> Enum.flat_map(&route_entry_points/1)
+    MapSet.new(phoenix_entry_points(analyzed_modules) ++ form_data_entry_points(analyzed_modules))
+  end
 
-    module_entry_points = Enum.flat_map(analyzed_modules, &module_entry_points/1)
+  defp phoenix_entry_points(analyzed_modules) do
+    if Code.ensure_loaded?(Phoenix) do
+      router_entry_points =
+        analyzed_modules
+        |> Enum.filter(&router_module?/1)
+        |> Enum.flat_map(&routes/1)
+        |> Enum.flat_map(&route_entry_points/1)
 
-    MapSet.new(router_entry_points ++ module_entry_points)
+      router_entry_points ++ Enum.flat_map(analyzed_modules, &endpoint_entry_points/1)
+    else
+      []
+    end
+  end
+
+  defp form_data_entry_points(analyzed_modules) do
+    if Code.ensure_loaded?(Phoenix.HTML.FormData) do
+      Enum.flat_map(analyzed_modules, &form_data_entry_point/1)
+    else
+      []
+    end
   end
 
   defp route_entry_points(%{plug: plug, plug_opts: action} = route)
@@ -88,10 +102,8 @@ defmodule Reacher.Filter.Phoenix do
 
   defp collect_metadata(_term, entry_points), do: entry_points
 
-  defp module_entry_points(module) do
-    socket_entry_points(module) ++
-      form_data_entry_points(module) ++
-      render_error_entry_points(module)
+  defp endpoint_entry_points(module) do
+    socket_entry_points(module) ++ render_error_entry_points(module)
   end
 
   defp html_entry_points(controller, action) do
@@ -122,7 +134,7 @@ defmodule Reacher.Filter.Phoenix do
 
   defp html_module(_controller), do: :error
 
-  defp form_data_entry_points(module) do
+  defp form_data_entry_point(module) do
     with true <- Code.ensure_loaded?(module),
          true <- function_exported?(module, :__impl__, 1),
          Phoenix.HTML.FormData <- module.__impl__(:protocol),

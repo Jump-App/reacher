@@ -73,4 +73,32 @@ defmodule Reacher.Filter.ObanTest do
       end
     )
   end
+
+  test "reports worker metadata and hook callbacks when the project does not depend on Oban Pro" do
+    in_project(
+      fn module ->
+        worker = Module.concat(module, Worker)
+        hook = Module.concat(module, Hook)
+
+        """
+        defmodule #{inspect(hook)} do
+          def before_process(job), do: {:ok, job}
+        end
+
+        defmodule #{inspect(worker)} do
+          def __opts__, do: [hooks: [#{inspect(hook)}]]
+          def __stage_opts__, do: []
+        end
+        """
+      end,
+      fn module ->
+        worker = Module.concat(module, Worker)
+        hook = Module.concat(module, Hook)
+        unreachable = Reacher.analyze() |> MapSet.new()
+
+        assert MapSet.member?(unreachable, {worker, :__stage_opts__, 0})
+        assert MapSet.member?(unreachable, {hook, :before_process, 1})
+      end
+    )
+  end
 end

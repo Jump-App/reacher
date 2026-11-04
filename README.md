@@ -29,6 +29,8 @@ The built-in filters include:
 - Protocol callbacks
 - Usages found via compiler traces
 
+Filters for third-party libraries (Phoenix, Absinthe, Oban Pro) only run when the library is available in the analyzed project, so projects without them skip those checks.
+
 You can also write your own project-specific filters (see below).
 
 ## Project configuration

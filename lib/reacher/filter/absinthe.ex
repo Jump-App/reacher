@@ -19,6 +19,14 @@ defmodule Reacher.Filter.Absinthe do
   end
 
   defp pipeline_callbacks(analyzed_modules) do
+    if Code.ensure_loaded?(Absinthe.Plug) do
+      find_pipeline_callbacks(analyzed_modules)
+    else
+      MapSet.new()
+    end
+  end
+
+  defp find_pipeline_callbacks(analyzed_modules) do
     analyzed_modules
     |> Enum.flat_map(&routes/1)
     |> Enum.flat_map(fn
@@ -50,6 +58,14 @@ defmodule Reacher.Filter.Absinthe do
   end
 
   defp batch_callbacks(analyzed_modules, ebin) do
+    if Code.ensure_loaded?(Absinthe.Resolution.Helpers) do
+      find_batch_callbacks(analyzed_modules, ebin)
+    else
+      MapSet.new()
+    end
+  end
+
+  defp find_batch_callbacks(analyzed_modules, ebin) do
     Enum.reduce(analyzed_modules, MapSet.new(), fn module, callbacks ->
       module
       |> definitions(ebin)

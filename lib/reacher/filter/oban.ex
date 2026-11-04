@@ -22,7 +22,11 @@ defmodule Reacher.Filter.Oban do
 
   @impl Reacher.Filterer
   def filter(candidates, context, _opts) do
-    filter_entry_points(candidates, context.modules, context.compile_path)
+    if Code.ensure_loaded?(Oban.Pro.Worker) do
+      filter_entry_points(candidates, context.modules, context.compile_path)
+    else
+      candidates
+    end
   end
 
   def filter_entry_points(candidates, analyzed_modules, ebin) do
