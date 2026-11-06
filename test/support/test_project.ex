@@ -18,6 +18,7 @@ defmodule Reacher.TestProject do
     Reacher.Filter.Project,
     Reacher.Filter.Protocol,
     Reacher.Filter.Source,
+    Reacher.InjectedDelegates,
     Reacher.StaticCall,
     Reacher.Tracing.CompilerTracer,
     Reacher.Tracing.Manifest,
@@ -64,7 +65,7 @@ defmodule Reacher.TestProject do
           version: "0.1.0",
           elixir: "~> 1.20",
           #{compiler_options}
-          elixirc_options: [debug_info: true]
+          elixirc_options: [debug_info: true, docs: true]
         ]
       end
 

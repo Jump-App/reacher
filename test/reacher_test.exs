@@ -577,4 +577,136 @@ defmodule ReacherTest do
       )
     end
   end
+
+  describe "macro-injected delegates" do
+    test "does not report delegates injected by a provider macro" do
+      in_project(
+        fn module ->
+          """
+          defmodule #{inspect(module)}.Provider do
+            defmacro __using__(_opts) do
+              quote do
+                defdelegate injected_zero(), to: System, as: :version
+                defdelegate injected_one(value), to: String, as: :length
+                defdelegate injected_defaults(left, right \\\\ 0), to: Kernel, as: :+
+
+                @before_compile #{inspect(module)}.Provider
+
+                defmodule Nested do
+                  defdelegate nested_zero(), to: System, as: :version
+                end
+              end
+            end
+
+            defmacro __before_compile__(_env) do
+              quote location: :keep do
+                defdelegate before_compile_zero(), to: System, as: :otp_release
+              end
+            end
+          end
+
+          defmodule #{inspect(module)} do
+            use #{inspect(module)}.Provider
+
+            def unused, do: :unused
+          end
+          """
+        end,
+        fn module ->
+          unreachable = Reacher.analyze() |> MapSet.new()
+          nested = Module.concat(module, Nested)
+
+          refute MapSet.member?(unreachable, {module, :injected_zero, 0})
+          refute MapSet.member?(unreachable, {module, :injected_one, 1})
+          refute MapSet.member?(unreachable, {module, :injected_defaults, 1})
+          refute MapSet.member?(unreachable, {module, :injected_defaults, 2})
+          refute MapSet.member?(unreachable, {module, :before_compile_zero, 0})
+          refute MapSet.member?(unreachable, {nested, :nested_zero, 0})
+          assert MapSet.member?(unreachable, {module, :unused, 0})
+        end
+      )
+    end
+
+    test "reports unused handwritten delegates" do
+      in_project(
+        fn module ->
+          """
+          defmodule #{inspect(module)} do
+            defdelegate handwritten(value), to: String, as: :length
+            defdelegate handwritten_zero(), to: System, as: :version
+
+            defdelegate handwritten_defaults(left, right \\\\ 1),
+              to: Kernel,
+              as: :+
+
+            Kernel.defdelegate(qualified(value), to: String, as: :trim)
+
+            @doc false
+            defdelegate hidden(value), to: String, as: :length
+
+            for {name, target} <- [looped_upcase: :upcase, looped_downcase: :downcase] do
+              defdelegate unquote(name)(value), to: String, as: target
+            end
+          end
+          """
+        end,
+        fn module ->
+          unreachable = Reacher.analyze() |> MapSet.new()
+
+          for mfa <- [
+                {module, :handwritten, 1},
+                {module, :handwritten_zero, 0},
+                {module, :handwritten_defaults, 2},
+                {module, :qualified, 1},
+                {module, :hidden, 1},
+                {module, :looped_upcase, 1},
+                {module, :looped_downcase, 1}
+              ] do
+            assert MapSet.member?(unreachable, mfa)
+          end
+
+          refute MapSet.member?(unreachable, {module, :handwritten_defaults, 1})
+        end
+      )
+    end
+
+    test "reports unused handwritten functions next to injected delegates" do
+      in_project(
+        fn module ->
+          """
+          defmodule #{inspect(module)}.Provider do
+            defmacro __using__(_opts) do
+              quote do
+                defdelegate injected(value), to: String, as: :length
+                defdelegate overridable(value), to: String, as: :upcase
+                defoverridable overridable: 1
+              end
+            end
+          end
+
+          defmodule #{inspect(module)} do
+            use #{inspect(module)}.Provider
+
+            defdelegate handwritten(value), to: String, as: :length
+
+            def overridable(value), do: String.downcase(value)
+
+            for status <- [:active, :paused] do
+              def unquote(:"\#{status}?")(value), do: value == unquote(status)
+            end
+          end
+          """
+        end,
+        fn module ->
+          unreachable = Reacher.analyze() |> MapSet.new()
+
+          refute MapSet.member?(unreachable, {module, :injected, 1})
+          assert MapSet.member?(unreachable, {module, :handwritten, 1})
+          assert MapSet.member?(unreachable, {module, :overridable, 1})
+          assert MapSet.member?(unreachable, {module, :active?, 1})
+          assert MapSet.member?(unreachable, {module, :paused?, 1})
+        end
+      )
+    end
+  end
 end

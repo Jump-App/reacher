@@ -1,4 +1,5 @@
 defmodule Reacher.Xref do
+  alias Reacher.InjectedDelegates
   alias Reacher.StaticCall
 
   def with_xref_server(ebin, fun) do
@@ -34,9 +35,10 @@ defmodule Reacher.Xref do
   in the returned map, keyed by its full-arity MFA.
   """
   def unreachable(server, ebin, analyzed_modules) do
-    metadata =
-      Map.new(analyzed_modules, fn module ->
-        {module, read_metadata(module, ebin)}
+    {metadata, _sources} =
+      Enum.reduce(analyzed_modules, {%{}, %{}}, fn module, {metadata, sources} ->
+        {module_metadata, sources} = read_metadata(module, ebin, sources)
+        {Map.put(metadata, module, module_metadata), sources}
       end)
 
     families = default_families(metadata)
@@ -136,7 +138,7 @@ defmodule Reacher.Xref do
     end
   end
 
-  defp read_metadata(module, ebin) do
+  defp read_metadata(module, ebin, sources) do
     beam =
       Path.join(
         ebin,
@@ -160,25 +162,32 @@ defmodule Reacher.Xref do
              data,
              []
            ) do
-      generated = generated_definitions(definitions)
+      {injected_delegates, sources} =
+        InjectedDelegates.detect(beam, info.file, definitions, sources)
+
+      generated = MapSet.union(generated_definitions(definitions), injected_delegates)
       default_families = default_families_in(definitions, generated)
 
-      %{
+      metadata = %{
         generated: MapSet.difference(generated, default_stubs(default_families)),
         default_families: default_families,
         callbacks: behaviour_callbacks(attributes),
         after_verify: Map.get(info, :after_verify, []),
         statically_resolved_calls: statically_resolved_calls(definitions)
       }
+
+      {metadata, sources}
     else
       _ ->
-        %{
+        metadata = %{
           generated: MapSet.new(),
           default_families: [],
           callbacks: MapSet.new(),
           after_verify: [],
           statically_resolved_calls: MapSet.new()
         }
+
+        {metadata, sources}
     end
   end
 
@@ -261,6 +270,9 @@ defmodule Reacher.Xref do
   # stamps on every node it injects. Source parsed from a hand-written file
   # never has `:context`, so this distinguishes framework reflection functions
   # (`__components__`, `__live__`, `__struct__`, `__impl__`, ...) from real code.
+  # 
+  # `defdelegate` drops `:context` from the heads it builds, so injected
+  # delegates are found separately by `Reacher.InjectedDelegates`.
   defp macro_generated?(meta) do
     meta[:generated] == true or Keyword.has_key?(meta, :context)
   end
