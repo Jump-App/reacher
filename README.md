@@ -89,3 +89,28 @@ The context exposes:
   the full-arity MFA to every arity it compiles to. Candidates include all of
   these arities; removing any one of them keeps the whole function out of the
   report
+
+## Using in CI
+
+### Enabling compiler traces
+
+For the most accurate results, the analyzed project should compile with Reacher's compiler tracer enabled. Add the dependency and the `:reacher` compiler to the project's `mix.exs`:
+
+```elixir
+def project do
+  [
+    # ...
+    compilers: [:reacher] ++ Mix.compilers()
+  ]
+end
+```
+
+Without the compiler, the analysis still runs, but it has no trace data and falls back to scanning source files for literal calls, so functions that are only called at compile time may be reported as unused.
+
+### Failing the build
+
+`mix reacher` exits with a non-zero status when it reports any unused function, so a plain step is enough to gate a build:
+
+```yaml
+- run: mix reacher
+```
