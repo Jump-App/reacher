@@ -63,7 +63,7 @@ defmodule Reacher.TestProject do
         [
           app: :#{app},
           version: "0.1.0",
-          elixir: "~> 1.20",
+          elixir: "~> 1.18",
           #{compiler_options}
           elixirc_options: [debug_info: true, docs: true]
         ]

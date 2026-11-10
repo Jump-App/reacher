@@ -5,7 +5,7 @@ defmodule Reacher.MixProject do
     [
       app: :reacher,
       version: "0.1.0",
-      elixir: "~> 1.20",
+      elixir: "~> 1.18",
       test_paths: ["test", "lib"],
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,

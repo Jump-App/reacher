@@ -588,7 +588,6 @@ defmodule ReacherTest do
               quote do
                 defdelegate injected_zero(), to: System, as: :version
                 defdelegate injected_one(value), to: String, as: :length
-                defdelegate injected_defaults(left, right \\\\ 0), to: Kernel, as: :+
 
                 @before_compile #{inspect(module)}.Provider
 
@@ -618,10 +617,40 @@ defmodule ReacherTest do
 
           refute MapSet.member?(unreachable, {module, :injected_zero, 0})
           refute MapSet.member?(unreachable, {module, :injected_one, 1})
-          refute MapSet.member?(unreachable, {module, :injected_defaults, 1})
-          refute MapSet.member?(unreachable, {module, :injected_defaults, 2})
           refute MapSet.member?(unreachable, {module, :before_compile_zero, 0})
           refute MapSet.member?(unreachable, {nested, :nested_zero, 0})
+          assert MapSet.member?(unreachable, {module, :unused, 0})
+        end
+      )
+    end
+
+    # Before Elixir 1.20 the compiler does not mark the lower-arity clauses of
+    # a delegate with default arguments as macro-generated.
+    @tag :elixir_1_20
+    test "does not report delegates with defaults injected by a provider macro" do
+      in_project(
+        fn module ->
+          """
+          defmodule #{inspect(module)}.Provider do
+            defmacro __using__(_opts) do
+              quote do
+                defdelegate injected_defaults(left, right \\\\ 0), to: Kernel, as: :+
+              end
+            end
+          end
+
+          defmodule #{inspect(module)} do
+            use #{inspect(module)}.Provider
+
+            def unused, do: :unused
+          end
+          """
+        end,
+        fn module ->
+          unreachable = Reacher.analyze() |> MapSet.new()
+
+          refute MapSet.member?(unreachable, {module, :injected_defaults, 1})
+          refute MapSet.member?(unreachable, {module, :injected_defaults, 2})
           assert MapSet.member?(unreachable, {module, :unused, 0})
         end
       )
