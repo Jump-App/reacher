@@ -14,6 +14,16 @@ The second form allows to only list functions defined in a certain module (altho
 
 The JSON form prints a sorted array of objects with `module`, `function`, and `arity` fields. The output is stable, so it can be diffed between revisions (for example in CI) to report added and removed findings.
 
+## Elixir version support
+
+Reacher is written for Elixir 1.20, but should generally work in Elixir 1.18 or later.
+
+Some detection relies on compiler metadata that only exists in newer versions:
+
+- **Elixir 1.20+**: a `defdelegate` with default arguments injected by a macro (e.g. inside `__using__/1`) is fully ignored. On earlier versions the compiler does not mark its lower-arity clauses as macro-generated, so those arities (e.g. `foo/1` for `defdelegate foo(a, b \\ 0)`) may be reported as unused.
+
+Future development would most likely generally target latest stable version and might drop support for older ones, if supporting them becomes too unwieldy.
+
 ## Sources
 
 Reacher mainly uses `:xref` in the compiled project to get a call graph. It also includes additional source recognizing some `Module.concat` call and a small compiler tracer to handle macros better.
