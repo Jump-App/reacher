@@ -1,7 +1,7 @@
 defmodule Reacher.MixProject do
   use Mix.Project
 
-  @version "0.1.0"
+  @version "0.2.0"
   @source_url "https://github.com/Jump-App/reacher"
 
   def project do
@@ -38,7 +38,7 @@ defmodule Reacher.MixProject do
 
   defp package do
     [
-      files: ["lib", "mix.exs", "README.md", "LICENSE"],
+      files: ["lib", "mix.exs", "README.md", "CHANGELOG.md", "LICENSE"],
       maintainers: ["Paweł Świątkowski"],
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url}
