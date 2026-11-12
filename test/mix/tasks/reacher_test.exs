@@ -163,10 +163,70 @@ defmodule Mix.Tasks.ReacherTest do
             end
           end)
 
-        assert :json.decode(output) == [
-                 %{"arity" => 1, "function" => "alpha", "module" => inspect(module)},
-                 %{"arity" => 0, "function" => "zeta", "module" => inspect(module)}
+        assert %{
+                 "unused" => [
+                   %{"arity" => 1, "function" => "alpha", "module" => module_name},
+                   %{"arity" => 0, "function" => "zeta", "module" => module_name}
+                 ],
+                 "unnecessary_skips" => []
+               } = :json.decode(output)
+
+        assert module_name == inspect(module)
+      end
+    )
+  end
+
+  test "includes unnecessary skips in machine-readable output" do
+    in_project(
+      fn module ->
+        """
+        defmodule #{inspect(module)} do
+          def unused, do: :unused
+        end
+        """
+      end,
+      fn module ->
+        File.write!(".reacher.exs", """
+        [exclude: [NonExistent.Module, {NonExistent.Other, :foo, 1}, {:bar, 2}, {#{inspect(module)}, :unused, 0}]]
+        """)
+
+        output = capture_io(fn -> Mix.Tasks.Reacher.run(["--format", "json"]) end)
+
+        assert %{"unused" => [], "unnecessary_skips" => skips} = :json.decode(output)
+
+        assert skips == [
+                 %{"module" => :null, "function" => "bar", "arity" => 2},
+                 %{"module" => "NonExistent.Module", "function" => :null, "arity" => :null},
+                 %{"module" => "NonExistent.Other", "function" => "foo", "arity" => 1}
                ]
+      end
+    )
+  end
+
+  test "distinguishes nil atom skips from absent fields in machine-readable output" do
+    in_project(
+      fn module ->
+        """
+        defmodule #{inspect(module)} do
+          def used, do: :ok
+        end
+        """
+      end,
+      fn module ->
+        File.write!(".reacher.exs", """
+        [exclude: [nil, {nil, :foo, 1}, {:foo, 1}, {#{inspect(module)}, :used, 0}]]
+        """)
+
+        output = capture_io(fn -> Mix.Tasks.Reacher.run(["--format", "json"]) end)
+
+        assert %{"unnecessary_skips" => skips} = :json.decode(output)
+
+        assert Enum.sort(skips) ==
+                 Enum.sort([
+                   %{"module" => "nil", "function" => :null, "arity" => :null},
+                   %{"module" => "nil", "function" => "foo", "arity" => 1},
+                   %{"module" => :null, "function" => "foo", "arity" => 1}
+                 ])
       end
     )
   end
