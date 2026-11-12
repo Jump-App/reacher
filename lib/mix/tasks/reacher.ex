@@ -8,6 +8,10 @@ defmodule Mix.Tasks.Reacher do
       mix reacher --format json
 
   Passing a module limits the report to that module.
+
+  The JSON format prints an object with `unused` and `unnecessary_skips` arrays.
+  Entries have `module`, `function` and `arity` fields; fields not present in
+  the skip are `null`.
   """
 
   use Mix.Task
@@ -31,7 +35,7 @@ defmodule Mix.Tasks.Reacher do
 
     case format do
       "json" ->
-        print_json(results)
+        print_json(results, unnecessary_skips)
 
       "text" ->
         print_results(results)
@@ -57,15 +61,35 @@ defmodule Mix.Tasks.Reacher do
     end)
   end
 
-  defp print_json(unreachable) do
-    unreachable
-    |> Enum.map(fn {module, name, arity} ->
-      %{module: inspect(module), function: Atom.to_string(name), arity: arity}
-    end)
-    |> Enum.sort_by(fn finding -> {finding.module, finding.function, finding.arity} end)
+  defp print_json(unreachable, unnecessary_skips) do
+    unused =
+      unreachable
+      |> Enum.map(fn {module, name, arity} -> json_entry(module, name, arity) end)
+      |> Enum.sort_by(&sort_key/1)
+
+    skips =
+      unnecessary_skips
+      |> Enum.map(&json_skip/1)
+      |> Enum.sort_by(&sort_key/1)
+
+    %{unused: unused, unnecessary_skips: skips}
     |> :json.encode()
     |> IO.puts()
   end
+
+  defp json_skip({m, n, a}) when is_atom(m) and is_atom(n) and is_integer(a),
+    do: json_entry(m, n, a)
+
+  defp json_skip({n, a}) when is_atom(n) and is_integer(a),
+    do: %{module: :null, function: Atom.to_string(n), arity: a}
+
+  defp json_skip(module) when is_atom(module),
+    do: %{module: inspect(module), function: :null, arity: :null}
+
+  defp json_entry(module, name, arity),
+    do: %{module: inspect(module), function: Atom.to_string(name), arity: arity}
+
+  defp sort_key(entry), do: {entry.module, entry.function, entry.arity}
 
   defp print_results([]) do
     Mix.shell().info("No unused functions found.")
